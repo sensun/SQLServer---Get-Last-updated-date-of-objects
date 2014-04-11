@@ -1,0 +1,271 @@
+IF EXISTS(SELECT 1 FROM sysobjects WHERE type = 'P' AND name = 'usp_get_LastUpdatedDate_of_objects')
+BEGIN
+  DROP PROCEDURE usp_get_LastUpdatedDate_of_objects
+END
+go
+set ANSI_NULLS ON
+set QUOTED_IDENTIFIER ON
+go
+CREATE PROCEDURE [dbo].[usp_get_LastUpdatedDate_of_objects] 
+@dbname     AS varchar(200), 
+@dbname_full_or_part AS varchar(200),
+@dbname_like_type  AS varchar(200)
+AS
+ /*
+ *****************************************************************************************
+ *                                                                                       *
+ * Name      :      usp_get_LastUpdatedDate_of_objects                                   *
+ * Author    :      Senthil Sundaresan                                                   *
+ * Parameters:      @dbname - expects the dbname to be passed or 'ALL'                   *
+ *       @dbname_full_or_part - expects 'FULL' or 'LIKE'                                 *
+ *       @dbname_like_type - expects 'Lead' or 'Trail' or 'Middle'                       *
+ *                                                                                       *
+ * Purpose   :      Searches the passed database and fetches the last updated date for   *
+ *                  All the tables in the database.                                      *
+ *                  If ALL is provided instead of Table name then returns the            *
+ *                  last updated for all the tables in all the databases.                *
+ * Created   :      09 Feb 2013                                                          *
+ *****************************************************************************************
+ */
+ --like option can be added
+ 
+SET NOCOUNT ON
+BEGIN
+ DECLARE @dbcount AS NVARCHAR(MAX)
+ DECLARE @printline AS VARCHAR(100)
+ DECLARE @tablecount AS INT
+ DECLARE @DB_NAME AS VARCHAR(100) 
+ DECLARE @DB_NAME_TRAIL AS VARCHAR(100)
+ DECLARE @DB_NAME_PART AS VARCHAR(100)
+ DECLARE @SQL  AS NVARCHAR(MAX)
+ DECLARE @PARAMS  AS NVARCHAR(MAX)
+-- DECLARE @debug = 1 AS BIT
+ SELECT @dbcount   = COUNT(name) FROM sys.sysdatabases
+ SELECT @DB_NAME   = char(39) + @dbname + '%' + char(39) 
+ SELECT @DB_NAME_TRAIL = char(39) + '%' + @dbname + char(39) 
+ SELECT @DB_NAME_PART = char(39) + '%' + @dbname + '%' + char(39) 
+ 
+ IF @dbcount != 0 
+  BEGIN
+   IF (@dbname = 'ALL')
+    BEGIN
+     SELECT 
+       b.name as DatabaseName,
+       OBJECT_NAME(OBJECT_ID) AS TableName, 
+       last_user_update,
+       last_user_seek,
+       last_user_scan,
+       last_user_lookup
+     FROM 
+       sys.dm_db_index_usage_stats a left join 
+       sys.databases    b 
+     ON 
+       a.database_id = b.database_id 
+     WHERE 
+       a.object_id IN 
+           (
+            SELECT 
+              c.id 
+            FROM 
+              sys.sysobjects c 
+            WHERE 
+              c.type in ('V','U','P')
+           ) AND 
+       a.last_user_update IS NOT NULL
+     ORDER BY 1
+    END
+   ELSE
+   
+    BEGIN
+     IF (upper(@dbname_full_or_part) = 'LIKE' AND upper(@dbname_like_type) = 'LEAD')
+    
+      SELECT @SQL= N' SELECT @cnt = count(name) ' +
+          N' FROM master.sys.sysdatabases '   +
+          N' WHERE name  LIKE '   + @DB_NAME  --= @dbname
+     ELSE IF (upper(@dbname_full_or_part) = 'LIKE' AND upper(@dbname_like_type) = 'TRAIL')
+     
+      SELECT @SQL= N' SELECT @cnt = count(name) ' +
+          N' FROM master.sys.sysdatabases '   +
+          N' WHERE name  LIKE '   + @DB_NAME_TRAIL  --= @dbname
+       
+     ELSE IF (upper(@dbname_full_or_part) = 'LIKE' AND upper(@dbname_like_type) = 'PART')
+      SELECT @SQL= N' SELECT @cnt = count(name) ' +
+          N' FROM master.sys.sysdatabases '   +
+          N' WHERE name  LIKE '   + @DB_NAME_PART  --= @dbname
+     
+     
+     SELECT @PARAMS=N'@cnt NVARCHAR(MAX) OUTPUT'
+     --select @SQL
+     Exec sp_executesql @SQL,@PARAMS, @cnt=@dbcount OUTPUT
+     --SELECT @dbcount
+     IF @dbcount !=0 
+     
+      BEGIN
+      
+       SELECT @tablecount = count(name) 
+       FROM sys.sysobjects 
+       WHERE type in ('V','U','P')
+       IF @tablecount !=0   
+        BEGIN  
+     
+          IF (upper(@dbname_full_or_part) = 'FULL')
+        
+          BEGIN
+           SELECT 
+             b.name as DatabaseName,
+             OBJECT_NAME(OBJECT_ID) AS TableName, 
+             last_user_update,
+             last_user_seek,
+             last_user_scan,
+             last_user_lookup
+           FROM 
+             sys.dm_db_index_usage_stats a left join 
+             sys.databases    b 
+           ON 
+             a.database_id = b.database_id 
+           WHERE 
+             a.object_id IN 
+                 (
+                  SELECT 
+                    c.id 
+                  FROM 
+                    sys.sysobjects c 
+                  WHERE 
+                    c.type in ('V','U','P')
+                 ) AND 
+             a.last_user_update IS NOT NULL AND
+             b.name   = @dbname
+           ORDER BY 1
+           
+          END
+          --print @dbname_like_type
+          IF (upper(@dbname_full_or_part) = 'LIKE' AND upper(@dbname_like_type) = 'LEAD')
+          BEGIN
+            
+           --SELECT + 'THE ' + @DB_NAME
+            
+             SELECT @SQL=N' SELECT b.name as DatabaseName, ' +
+                N' OBJECT_NAME(OBJECT_ID) AS TableName, ' + 
+                N' last_user_update, ' +
+                N' last_user_seek, ' +
+                N' last_user_scan, ' +
+                N' last_user_lookup ' +
+                N' FROM ' +
+                N' sys.dm_db_index_usage_stats a left join ' +
+                N' sys.databases    b ' +
+                N' ON ' +
+                N' a.database_id = b.database_id ' +
+                N' WHERE ' +
+                /*N' a.object_id IN ' +
+                   N' ( ' +
+                   N' SELECT ' +
+                   N'   c.id ' +
+                   N' FROM ' +
+                   N'   sys.sysobjects c ' +
+                   N' WHERE ' +
+                   N'   c.type in (' + char(39) + 'V' + char(39) + ',' +  char(39) + 'U' + char(39) + ',' + char(39) + 'P' + char(39) + ')' +
+                   N' ) AND ' +*/
+                N' a.last_user_update IS NOT NULL AND ' +
+                N' b.name   LIKE  ' + @DB_NAME + --'''' + '%' + @dbname + '''' 
+                N' ORDER BY 1 ' 
+             --select @SQL
+             EXEC sp_executesql @SQL
+           
+          END
+          
+          
+          IF (upper(@dbname_full_or_part) = 'LIKE' AND upper(@dbname_like_type) = 'TRAIL')      
+          
+          BEGIN
+ 
+            SELECT @SQL=N' SELECT b.name as DatabaseName, ' +
+               N' OBJECT_NAME(OBJECT_ID) AS TableName, ' + 
+               N' last_user_update, ' +
+               N' last_user_seek, ' +
+               N' last_user_scan, ' +
+               N' last_user_lookup ' +
+               N' FROM ' +
+               N' sys.dm_db_index_usage_stats a left join ' +
+               N' sys.databases    b ' +
+               N' ON ' +
+               N' a.database_id = b.database_id ' +
+               N' WHERE ' +
+               /*N' a.object_id IN ' +
+                  N' ( ' +
+                  N' SELECT ' +
+                  N'   c.id ' +
+                  N' FROM ' +
+                  N'   sys.sysobjects c ' +
+                  N' WHERE ' +
+                  N'   c.type in (' + char(39) + 'V' + char(39) + ',' +  char(39) + 'U' + char(39) + ',' + char(39) + 'P' + char(39) + ')' +
+                  N' ) AND ' +*/
+               N' a.last_user_update IS NOT NULL AND ' +
+               N' b.name   LIKE  ' + @DB_NAME_TRAIL +
+               N' ORDER BY 1 ' 
+            
+            EXEC sp_executesql @SQL
+          END
+          
+          IF (upper(@dbname_full_or_part) = 'LIKE' AND upper(@dbname_like_type) = 'PART')
+           BEGIN
+            SELECT @SQL=N' SELECT b.name as DatabaseName, ' +
+               N' OBJECT_NAME(OBJECT_ID) AS TableName, ' + 
+               N' last_user_update, ' +
+               N' last_user_seek, ' +
+               N' last_user_scan, ' +
+               N' last_user_lookup ' +
+               N' FROM ' +
+               N' sys.dm_db_index_usage_stats a left join ' +
+               N' sys.databases    b ' +
+               N' ON ' +
+               N' a.database_id = b.database_id ' +
+               N' WHERE ' +
+               /*N' a.object_id IN ' +
+                  N' ( ' +
+                  N' SELECT ' +
+                  N'   c.id ' +
+                  N' FROM ' +
+                  N'   sys.sysobjects c ' +
+                  N' WHERE ' +
+                  N'   c.type in (' + char(39) + 'V' + char(39) + ',' +  char(39) + 'U' + char(39) + ',' + char(39) + 'P' + char(39) + ')' +
+                  N' ) AND ' +*/
+               N' a.last_user_update IS NOT NULL AND ' +
+               N' b.name   LIKE  ' + @DB_NAME_PART +
+               N' ORDER BY 1 ' 
+            
+            EXEC sp_executesql @SQL
+           END
+          
+       
+        END
+       
+      ELSE
+       
+        BEGIN
+         SELECT @printline = CONVERT (varchar(10), @tablecount) + ' Tables in ' + @dbname 
+          
+         SELECT @printline
+        END
+       
+      END
+     ELSE
+      BEGIN
+       SELECT @printline = CONVERT (varchar(10), @dbcount) + ' db named ' + @dbname 
+        
+       SELECT @printline
+      END
+    END
+  END
+ ELSE
+  BEGIN
+   SELECT @printline = CONVERT (varchar(10), @dbcount) + ' db named ' + @dbname 
+    
+   SELECT @printline
+  END  
+ 
+--SELECT @DB_NAME
+RETURN 0
+END
+ 
+--usp_get_LastUpdatedDate_of_objects 'ALL', '',''
+--usp_get_LastUpdatedDate_of_objects 'Test','LIKE','PART'
